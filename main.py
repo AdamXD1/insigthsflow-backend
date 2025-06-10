@@ -24,13 +24,19 @@ app.add_middleware(
 )
 
 # --- Modelos Pydantic para las Peticiones ---
+class AggregationRequest(BaseModel):
+    column: str
+    function: str  # Ejemplo: SUM, AVG, COUNT, MAX, MIN
+
 class TableDataQueryRequest(BaseModel):
     table_name: str
     columns: List[str]
     limit: Optional[int] = None
-    brand_id: Optional[str] = None # Añadido brand_id
-    start_date: Optional[str] = None  # Nuevo campo para filtrar por fecha
-    end_date: Optional[str] = None    # Nuevo campo para filtrar por fecha
+    brand_id: Optional[str] = None
+    start_date: Optional[str] = None
+    end_date: Optional[str] = None
+    aggregations: Optional[List[AggregationRequest]] = None
+    group_by: Optional[List[str]] = None
     # Aquí se podrían añadir en el futuro: filters, group_by, aggregations, order_by
 
 # --- Rutas de la API para BigQuery ---
@@ -93,8 +99,10 @@ async def query_bigquery_table_data(request_body: TableDataQueryRequest):
             columns=request_body.columns,
             limit=request_body.limit,
             brand_id=request_body.brand_id,
-            start_date=request_body.start_date,  # Nuevo parámetro
-            end_date=request_body.end_date       # Nuevo parámetro
+            start_date=request_body.start_date,
+            end_date=request_body.end_date,
+            aggregations=request_body.aggregations,
+            group_by=request_body.group_by
         )
         return {"data": data}
     except ValueError as ve: # Errores como tabla no permitida, columnas vacías, columna no existe

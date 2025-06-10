@@ -7,11 +7,9 @@ from typing import Optional
 load_dotenv() # Carga variables de .env si existe
 
 # --- Configuración ---
-CREDENTIALS_PATH = os.getenv("GOOGLE_APPLICATION_CREDENTIALS", "credentials/bigquery-service-account.json")
-PROJECT_ID = None 
+DEV_MODE = False  # Cambia a True para usar credenciales locales en desarrollo
 
-#DATASET_ID = "pro_services_us_dwh"
-#ALLOWED_TABLES = ["favorites_2_brandid"]
+PROJECT_ID = "services-pro-368012"  # Proyecto fijo
 
 DATASET_ID = "pro_services_us_kpi"
 ALLOWED_TABLES = ["kpi_consumption_performance", "kpi_content_ranking", "kpi_content_genre_performance", "kpi_content_search", "kpi_appstore_aquisition", "kpi_channels", "kpi_viewers"]
@@ -22,17 +20,15 @@ ALLOWED_TABLES = ["kpi_consumption_performance", "kpi_content_ranking", "kpi_con
 
 # --- Cliente de BigQuery ---
 def get_bigquery_client():
-    """Inicializa y devuelve un cliente de BigQuery."""
-    base_dir = os.path.dirname(os.path.abspath(__file__))
-    credentials_full_path = os.path.join(base_dir, CREDENTIALS_PATH)
-
-    if not os.path.exists(credentials_full_path):
-        raise FileNotFoundError(f"El archivo de credenciales no se encontró en: {credentials_full_path}. Asegúrate de que 'backend/{CREDENTIALS_PATH}' existe y la variable de entorno GOOGLE_APPLICATION_CREDENTIALS está bien configurada si la usas.")
-
-    credentials = service_account.Credentials.from_service_account_file(credentials_full_path)
-    client = bigquery.Client(credentials=credentials, project=credentials.project_id)
-    global PROJECT_ID
-    PROJECT_ID = client.project 
+    """Inicializa y devuelve un cliente de BigQuery usando el PROJECT_ID fijo."""
+    if DEV_MODE:
+        credentials_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "credentials/bigquery-service-account.json")
+        if not os.path.exists(credentials_path):
+            raise FileNotFoundError(f"No se encontró el archivo de credenciales en {credentials_path}")
+        credentials = service_account.Credentials.from_service_account_file(credentials_path)
+        client = bigquery.Client(credentials=credentials, project=PROJECT_ID)
+    else:
+        client = bigquery.Client(project=PROJECT_ID)
     return client
 
 # --- Funciones del servicio ---
@@ -64,12 +60,14 @@ def get_table_schema(table_id: str):
         print(f"Error al obtener el esquema para {table_ref_string}: {e}")
         raise RuntimeError(f"No se pudo obtener el esquema para la tabla '{table_id}'. Verifica que la tabla existe en el dataset '{DATASET_ID}' y que las credenciales tienen permisos.") from e
 
-def get_data_from_table(table_id: str, columns: list[str], limit: int = 100, brand_id: Optional[str] = None, start_date: Optional[str] = None, end_date: Optional[str] = None):
+def get_data_from_table(table_id: str, columns: list[str], limit: int = 100, brand_id: Optional[str] = None, start_date: Optional[str] = None, end_date: Optional[str] = None, aggregations: Optional[list] = None, group_by: Optional[list[str]] = None):
     """
-    Obtiene datos de una tabla específica, seleccionando columnas específicas, aplicando un límite y opcionalmente filtrando por brand_id y rango de fechas (daydate).
+    Obtiene datos de una tabla específica, seleccionando columnas específicas, aplicando un límite y opcionalmente filtrando por brand_id, rango de fechas (daydate), agregaciones y group by.
+    - aggregations: lista de dicts {column: str, function: str}
+    - group_by: lista de columnas
     """
-    if not columns:
-        raise ValueError("La lista de columnas no puede estar vacía.")
+    if not columns and not aggregations:
+        raise ValueError("Debes especificar columnas o agregaciones.")
 
     if table_id not in ALLOWED_TABLES:
         raise ValueError(f"La tabla '{table_id}' no está permitida o no existe en la lista de tablas autorizadas.")
@@ -79,16 +77,30 @@ def get_data_from_table(table_id: str, columns: list[str], limit: int = 100, bra
 
     # Validar que las columnas existan en el esquema (opcional pero recomendado)
     try:
-        table_schema = get_table_schema(table_id) # Reutilizamos la función existente
+        table_schema = get_table_schema(table_id)
         schema_column_names = [field["name"] for field in table_schema]
-        for col in columns:
-            if col not in schema_column_names:
-                raise ValueError(f"La columna '{col}' no existe en la tabla '{table_id}'. Columnas disponibles: {schema_column_names}")
+        if columns:
+            for col in columns:
+                if col not in schema_column_names:
+                    raise ValueError(f"La columna '{col}' no existe en la tabla '{table_id}'. Columnas disponibles: {schema_column_names}")
+        if aggregations:
+            for agg in aggregations:
+                if agg["column"] not in schema_column_names:
+                    raise ValueError(f"La columna de agregación '{agg['column']}' no existe en la tabla '{table_id}'.")
     except Exception as e:
         raise RuntimeError(f"No se pudo validar el esquema para la tabla '{table_id}' antes de la consulta: {e}")
 
-    columns_str = ", ".join(columns)
-    query = f"SELECT {columns_str} FROM `{table_ref_string}`"
+    select_parts = []
+    if columns:
+        select_parts.extend(columns)
+    if aggregations:
+        for agg in aggregations:
+            func = agg["function"].upper()
+            col = agg["column"]
+            alias = f"{func.lower()}_{col}"
+            select_parts.append(f"{func}({col}) AS {alias}")
+    select_str = ", ".join(select_parts)
+    query = f"SELECT {select_str} FROM `{table_ref_string}`"
 
     where_clauses = []
     if brand_id:
@@ -101,13 +113,25 @@ def get_data_from_table(table_id: str, columns: list[str], limit: int = 100, bra
     if where_clauses:
         query += " WHERE " + " AND ".join(where_clauses)
 
+    if group_by:
+        query += " GROUP BY " + ", ".join(group_by)
+
     if limit is not None:
         query += f" LIMIT {limit}"
 
     try:
+        print("[LOG] Parámetros recibidos para construir la consulta:")
+        print(f"  table_id: {table_id}")
+        print(f"  columns: {columns}")
+        print(f"  limit: {limit}")
+        print(f"  brand_id: {brand_id}")
+        print(f"  start_date: {start_date}")
+        print(f"  end_date: {end_date}")
+        print(f"  aggregations: {aggregations}")
+        print(f"  group_by: {group_by}")
         print(f"Ejecutando consulta en BigQuery: {query}")
         query_job = client.query(query)
-        results = query_job.result()  # Espera a que la consulta termine
+        results = query_job.result()
         rows = [dict(row) for row in results]
         return rows
     except Exception as e:
@@ -118,11 +142,10 @@ if __name__ == '__main__':
     print(f"Intentando cargar credenciales desde: {os.getenv('GOOGLE_APPLICATION_CREDENTIALS', 'ruta por defecto credentials/bigquery-service-account.json')}")
     
     # Establecer la ruta base para las credenciales si no está en el entorno
+    #if not os.getenv("GOOGLE_APPLICATION_CREDENTIALS"):
     # Esto es principalmente para pruebas locales directas de este script
-    if not os.getenv("GOOGLE_APPLICATION_CREDENTIALS"):
-        os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = "credentials/bigquery-service-account.json"
-        print(f"Establecida GOOGLE_APPLICATION_CREDENTIALS a: {os.environ['GOOGLE_APPLICATION_CREDENTIALS']} para prueba local.")
-
+     #   os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = "credentials/bigquery-service-account.json"
+      #  print(f"Establecida GOOGLE_APPLICATION_CREDENTIALS a: {os.environ['GOOGLE_APPLICATION_CREDENTIALS']} para prueba local.")
 
     # Verifica la existencia del archivo de credenciales para depuración
     _base_dir = os.path.dirname(os.path.abspath(__file__))
