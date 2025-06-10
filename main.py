@@ -17,7 +17,11 @@ app = FastAPI(
 # Habilita CORS
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[os.getenv("FRONTEND_URL", "http://localhost:3000")], # Configurable por .env
+    allow_origins=[
+        os.getenv("FRONTEND_URL", "http://localhost:3000"),
+        "https://insigthsflow-ozeryibpu-jump-ai-technologies.vercel.app",
+        "https://insigthsflow.vercel.app"
+    ], # Configurable por .env y producción
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
