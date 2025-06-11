@@ -41,6 +41,7 @@ class TableDataQueryRequest(BaseModel):
     end_date: Optional[str] = None
     aggregations: Optional[List[AggregationRequest]] = None
     group_by: Optional[List[str]] = None
+    order_by: Optional[dict] = None  # {'column': str, 'direction': 'ASC'|'DESC'}
     # Aquí se podrían añadir en el futuro: filters, group_by, aggregations, order_by
 
 # --- Rutas de la API para BigQuery ---
@@ -106,7 +107,8 @@ async def query_bigquery_table_data(request_body: TableDataQueryRequest):
             start_date=request_body.start_date,
             end_date=request_body.end_date,
             aggregations=request_body.aggregations,
-            group_by=request_body.group_by
+            group_by=request_body.group_by,
+            order_by=request_body.order_by
         )
         return {"data": data}
     except ValueError as ve: # Errores como tabla no permitida, columnas vacías, columna no existe

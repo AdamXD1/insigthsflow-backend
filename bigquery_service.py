@@ -7,7 +7,7 @@ from typing import Optional
 load_dotenv() # Carga variables de .env si existe
 
 # --- Configuración ---
-DEV_MODE = False  # Cambia a True para usar credenciales locales en desarrollo
+DEV_MODE = True  # Cambia a True para usar credenciales locales en desarrollo
 
 PROJECT_ID = "services-pro-368012"  # Proyecto fijo
 
@@ -60,11 +60,12 @@ def get_table_schema(table_id: str):
         print(f"Error al obtener el esquema para {table_ref_string}: {e}")
         raise RuntimeError(f"No se pudo obtener el esquema para la tabla '{table_id}'. Verifica que la tabla existe en el dataset '{DATASET_ID}' y que las credenciales tienen permisos.") from e
 
-def get_data_from_table(table_id: str, columns: list[str], limit: int = 100, brand_id: Optional[str] = None, start_date: Optional[str] = None, end_date: Optional[str] = None, aggregations: Optional[list] = None, group_by: Optional[list[str]] = None):
+def get_data_from_table(table_id: str, columns: list[str], limit: int = 100, brand_id: Optional[str] = None, start_date: Optional[str] = None, end_date: Optional[str] = None, aggregations: Optional[list] = None, group_by: Optional[list[str]] = None, order_by: Optional[dict] = None):
     """
-    Obtiene datos de una tabla específica, seleccionando columnas específicas, aplicando un límite y opcionalmente filtrando por brand_id, rango de fechas (daydate), agregaciones y group by.
+    Obtiene datos de una tabla específica, seleccionando columnas específicas, aplicando un límite y opcionalmente filtrando por brand_id, rango de fechas (daydate), agregaciones, group by y order by.
     - aggregations: lista de dicts {column: str, function: str}
     - group_by: lista de columnas
+    - order_by: dict {'column': str, 'direction': 'ASC'|'DESC'}
     """
     if not columns and not aggregations:
         raise ValueError("Debes especificar columnas o agregaciones.")
@@ -87,6 +88,13 @@ def get_data_from_table(table_id: str, columns: list[str], limit: int = 100, bra
             for agg in aggregations:
                 if agg["column"] not in schema_column_names:
                     raise ValueError(f"La columna de agregación '{agg['column']}' no existe en la tabla '{table_id}'.")
+        if order_by:
+            if "column" not in order_by or "direction" not in order_by:
+                raise ValueError("El parámetro order_by debe tener 'column' y 'direction'.")
+            if order_by["column"] not in schema_column_names:
+                raise ValueError(f"La columna de ordenamiento '{order_by['column']}' no existe en la tabla '{table_id}'.")
+            if order_by["direction"].upper() not in ["ASC", "DESC"]:
+                raise ValueError("La dirección de ordenamiento debe ser 'ASC' o 'DESC'.")
     except Exception as e:
         raise RuntimeError(f"No se pudo validar el esquema para la tabla '{table_id}' antes de la consulta: {e}")
 
@@ -116,6 +124,9 @@ def get_data_from_table(table_id: str, columns: list[str], limit: int = 100, bra
     if group_by:
         query += " GROUP BY " + ", ".join(group_by)
 
+    if order_by:
+        query += f" ORDER BY {order_by['column']} {order_by['direction'].upper()}"
+
     if limit is not None:
         query += f" LIMIT {limit}"
 
@@ -129,6 +140,7 @@ def get_data_from_table(table_id: str, columns: list[str], limit: int = 100, bra
         print(f"  end_date: {end_date}")
         print(f"  aggregations: {aggregations}")
         print(f"  group_by: {group_by}")
+        print(f"  order_by: {order_by}")
         print(f"Ejecutando consulta en BigQuery: {query}")
         query_job = client.query(query)
         results = query_job.result()
