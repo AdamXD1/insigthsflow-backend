@@ -99,14 +99,46 @@ def get_data_from_table(table_id: str, columns: list[str], limit: int = 100, bra
         raise RuntimeError(f"No se pudo validar el esquema para la tabla '{table_id}' antes de la consulta: {e}")
 
     select_parts = []
-    if columns:
-        select_parts.extend(columns)
+    
+    # Manejar columnas cuando hay GROUP BY
+    if group_by:
+        # Solo incluir columnas que estén en GROUP BY
+        for col in columns:
+            if col in group_by:
+                select_parts.append(col)
+            else:
+                # Si la columna no está en GROUP BY, verificar si está en agregaciones
+                if aggregations:
+                    is_aggregated = any(agg["column"] == col for agg in aggregations)
+                    if not is_aggregated:
+                        print(f"ADVERTENCIA: La columna '{col}' no está en GROUP BY ni es una agregación. Se omitirá del SELECT.")
+                else:
+                    print(f"ADVERTENCIA: La columna '{col}' no está en GROUP BY. Se omitirá del SELECT.")
+    else:
+        # Sin GROUP BY
+        if aggregations:
+            # Si hay agregaciones sin GROUP BY, solo incluir las agregaciones
+            # No incluir columnas originales porque causaría error en BigQuery
+            pass
+        else:
+            # Sin GROUP BY y sin agregaciones, incluir todas las columnas
+            if columns:
+                select_parts.extend(columns)
+    
+    # Agregar todas las agregaciones
     if aggregations:
         for agg in aggregations:
             func = agg["function"].upper()
             col = agg["column"]
             alias = f"{func.lower()}_{col}"
             select_parts.append(f"{func}({col}) AS {alias}")
+            
+            # Si la columna original está en columns pero no en group_by, 
+            # también agregar la columna original con el alias para compatibilidad
+            if columns and col in columns and (not group_by or col not in group_by):
+                # La agregación ya se agregó arriba, no necesitamos hacer nada más
+                pass
+    
     select_str = ", ".join(select_parts)
     query = f"SELECT {select_str} FROM `{table_ref_string}`"
 

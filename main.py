@@ -20,7 +20,8 @@ app.add_middleware(
     allow_origins=[
         os.getenv("FRONTEND_URL", "http://localhost:3000"),
         "https://insigthsflow-ozeryibpu-jump-ai-technologies.vercel.app",
-        "https://insigthsflow.vercel.app"
+        "https://insigthsflow.vercel.app",
+        "https://insigthsflow-git-insigthsflow-frontend-jump-ai-technologies.vercel.app"
     ], # Configurable por .env y producción
     allow_credentials=True,
     allow_methods=["*"],
@@ -99,6 +100,20 @@ async def query_bigquery_table_data(request_body: TableDataQueryRequest):
     Endpoint para obtener datos de una tabla de BigQuery.
     """
     try:
+        # Logs de depuración para ver qué llega
+        print("[DEBUG] Datos recibidos en el endpoint:")
+        print(f"  table_name: {request_body.table_name}")
+        print(f"  columns: {request_body.columns}")
+        print(f"  aggregations: {request_body.aggregations}")
+        print(f"  group_by: {request_body.group_by}")
+        print(f"  order_by: {request_body.order_by}")
+        
+        # Convertir AggregationRequest a diccionarios si existen
+        aggregations_dict = None
+        if request_body.aggregations:
+            aggregations_dict = [{"column": agg.column, "function": agg.function} for agg in request_body.aggregations]
+            print(f"[DEBUG] Aggregations convertidas a dict: {aggregations_dict}")
+        
         data = bigquery_service.get_data_from_table(
             table_id=request_body.table_name,
             columns=request_body.columns,
@@ -106,7 +121,7 @@ async def query_bigquery_table_data(request_body: TableDataQueryRequest):
             brand_id=request_body.brand_id,
             start_date=request_body.start_date,
             end_date=request_body.end_date,
-            aggregations=request_body.aggregations,
+            aggregations=aggregations_dict,
             group_by=request_body.group_by,
             order_by=request_body.order_by
         )
