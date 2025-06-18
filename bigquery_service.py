@@ -7,7 +7,7 @@ from typing import Optional
 load_dotenv() # Carga variables de .env si existe
 
 # --- Configuración ---
-DEV_MODE = True  # Cambia a True para usar credenciales locales en desarrollo
+DEV_MODE = False  # Cambia a True para usar credenciales locales en desarrollo
 
 PROJECT_ID = "services-pro-368012"  # Proyecto fijo
 
