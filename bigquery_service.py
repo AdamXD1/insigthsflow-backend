@@ -7,7 +7,7 @@ from typing import Optional
 load_dotenv() # Carga variables de .env si existe
 
 # --- Configuración ---
-DEV_MODE = False  # Cambia a True para usar credenciales locales en desarrollo
+DEV_MODE = True  # Cambia a True para usar credenciales locales en desarrollo
 
 PROJECT_ID = "services-pro-368012"  # Proyecto fijo
 
@@ -102,12 +102,13 @@ def get_table_schema(table_id: str):
         print(f"Error al obtener el esquema para {table_ref_string}: {e}")
         raise RuntimeError(f"No se pudo obtener el esquema para la tabla '{table_id}'. Verifica que la tabla existe en el dataset '{DATASET_ID}' y que las credenciales tienen permisos.") from e
 
-def get_data_from_table(table_id: str, columns: list[str], limit: int = 100, brand_id: Optional[str] = None, start_date: Optional[str] = None, end_date: Optional[str] = None, aggregations: Optional[list] = None, group_by: Optional[list[str]] = None, order_by: Optional[dict] = None):
+def get_data_from_table(table_id: str, columns: list[str], limit: int = 100, brand_id: Optional[str] = None, start_date: Optional[str] = None, end_date: Optional[str] = None, aggregations: Optional[list] = None, group_by: Optional[list[str]] = None, order_by: Optional[dict] = None, additional_filters: Optional[list[dict]] = None):
     """
     Obtiene datos de una tabla específica, seleccionando columnas específicas, aplicando un límite y opcionalmente filtrando por brand_id, rango de fechas (daydate), agregaciones, group by y order by.
     - aggregations: lista de dicts {column: str, function: str}
     - group_by: lista de columnas
     - order_by: dict {'column': str, 'direction': 'ASC'|'DESC'}
+    - additional_filters: lista de dicts {'column': str, 'operator': str, 'value': str} para filtros adicionales
     """
     if not columns and not aggregations:
         raise ValueError("Debes especificar columnas o agregaciones.")
@@ -138,6 +139,20 @@ def get_data_from_table(table_id: str, columns: list[str], limit: int = 100, bra
                 raise ValueError(f"La columna de ordenamiento '{order_by['column']}' no existe en la tabla '{table_id}'.")
             if order_by["direction"].upper() not in ["ASC", "DESC"]:
                 raise ValueError("La dirección de ordenamiento debe ser 'ASC' o 'DESC'.")
+        
+        # Validar filtros adicionales
+        if additional_filters:
+            for filter_item in additional_filters:
+                if not isinstance(filter_item, dict):
+                    raise ValueError("Cada filtro adicional debe ser un diccionario.")
+                if "column" not in filter_item or "operator" not in filter_item or "value" not in filter_item:
+                    raise ValueError("Cada filtro adicional debe tener 'column', 'operator' y 'value'.")
+                if filter_item["column"] not in schema_column_names:
+                    raise ValueError(f"La columna del filtro '{filter_item['column']}' no existe en la tabla '{table_id}'.")
+                # Validar operadores permitidos
+                allowed_operators = ["=", "!=", ">", "<", ">=", "<=", "LIKE", "IN", "NOT IN", "IS NULL", "IS NOT NULL"]
+                if filter_item["operator"].upper() not in [op.upper() for op in allowed_operators]:
+                    raise ValueError(f"Operador '{filter_item['operator']}' no válido. Operadores permitidos: {allowed_operators}")
     except Exception as e:
         raise RuntimeError(f"No se pudo validar el esquema para la tabla '{table_id}' antes de la consulta: {e}")
 
@@ -194,6 +209,61 @@ def get_data_from_table(table_id: str, columns: list[str], limit: int = 100, bra
         where_clauses.append(f"daydate >= '{start_date}'")
     if end_date:
         where_clauses.append(f"daydate <= '{end_date}'")
+    
+    # Agregar filtros adicionales
+    if additional_filters:
+        for filter_item in additional_filters:
+            column = filter_item["column"]
+            operator = filter_item["operator"].upper()
+            value = filter_item["value"]
+            
+            # Obtener el tipo de dato de la columna del esquema
+            column_type = None
+            for field in table_schema:
+                if field["name"] == column:
+                    column_type = field["type"].upper()
+                    break
+            
+            # Sanitizar el valor según el operador y tipo de dato
+            if operator in ["LIKE"]:
+                # Para LIKE, siempre es string, mantener las comillas simples y escapar si es necesario
+                sanitized_value = str(value).replace("'", "''")
+                where_clauses.append(f"{column} {operator} '{sanitized_value}'")
+            elif operator in ["IN", "NOT IN"]:
+                # Para IN/NOT IN, asumimos que value es una lista de valores
+                if isinstance(value, list):
+                    if column_type in ["INTEGER", "INT64", "FLOAT", "FLOAT64", "NUMERIC", "BIGNUMERIC", "BOOLEAN", "BOOL"]:
+                        # Para tipos numéricos y booleanos, no usar comillas
+                        sanitized_values = [str(v) for v in value]
+                        values_str = ", ".join(sanitized_values)
+                    else:
+                        # Para strings y otros tipos, usar comillas
+                        sanitized_values = [str(v).replace("'", "''") for v in value]
+                        values_str = ", ".join([f"'{v}'" for v in sanitized_values])
+                    where_clauses.append(f"{column} {operator} ({values_str})")
+                else:
+                    raise ValueError(f"Para operadores IN/NOT IN, el valor debe ser una lista.")
+            elif operator in ["IS NULL", "IS NOT NULL"]:
+                # Para IS NULL/IS NOT NULL, no necesitamos valor
+                where_clauses.append(f"{column} {operator}")
+            else:
+                # Para operadores de comparación (=, !=, >, <, >=, <=)
+                if column_type in ["INTEGER", "INT64", "FLOAT", "FLOAT64", "NUMERIC", "BIGNUMERIC"]:
+                    # Para tipos numéricos, no usar comillas
+                    sanitized_value = str(value)
+                    where_clauses.append(f"{column} {operator} {sanitized_value}")
+                elif column_type in ["BOOLEAN", "BOOL"]:
+                    # Para booleanos, usar TRUE/FALSE sin comillas
+                    if isinstance(value, bool):
+                        sanitized_value = "TRUE" if value else "FALSE"
+                    else:
+                        sanitized_value = "TRUE" if str(value).lower() in ["true", "1", "yes"] else "FALSE"
+                    where_clauses.append(f"{column} {operator} {sanitized_value}")
+                else:
+                    # Para strings y otros tipos, usar comillas
+                    sanitized_value = str(value).replace("'", "''")
+                    where_clauses.append(f"{column} {operator} '{sanitized_value}'")
+    
     if where_clauses:
         query += " WHERE " + " AND ".join(where_clauses)
 
@@ -217,6 +287,7 @@ def get_data_from_table(table_id: str, columns: list[str], limit: int = 100, bra
         print(f"  aggregations: {aggregations}")
         print(f"  group_by: {group_by}")
         print(f"  order_by: {order_by}")
+        print(f"  additional_filters: {additional_filters}")
         print(f"Ejecutando consulta en BigQuery: {query}")
         query_job = client.query(query)
         results = query_job.result()

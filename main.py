@@ -33,6 +33,11 @@ class AggregationRequest(BaseModel):
     column: str
     function: str  # Ejemplo: SUM, AVG, COUNT, MAX, MIN
 
+class AdditionalFilterRequest(BaseModel):
+    column: str
+    operator: str  # Ejemplo: =, !=, >, <, >=, <=, LIKE, IN, NOT IN, IS NULL, IS NOT NULL
+    value: Any  # Puede ser string, number, list, etc.
+
 class TableDataQueryRequest(BaseModel):
     table_name: str
     columns: List[str]
@@ -43,6 +48,7 @@ class TableDataQueryRequest(BaseModel):
     aggregations: Optional[List[AggregationRequest]] = None
     group_by: Optional[List[str]] = None
     order_by: Optional[dict] = None  # {'column': str, 'direction': 'ASC'|'DESC'}
+    additional_filters: Optional[List[AdditionalFilterRequest]] = None  # Filtros adicionales
     # Aquí se podrían añadir en el futuro: filters, group_by, aggregations, order_by
 
 # --- Rutas de la API para BigQuery ---
@@ -107,12 +113,19 @@ async def query_bigquery_table_data(request_body: TableDataQueryRequest):
         print(f"  aggregations: {request_body.aggregations}")
         print(f"  group_by: {request_body.group_by}")
         print(f"  order_by: {request_body.order_by}")
+        print(f"  additional_filters: {request_body.additional_filters}")
         
         # Convertir AggregationRequest a diccionarios si existen
         aggregations_dict = None
         if request_body.aggregations:
             aggregations_dict = [{"column": agg.column, "function": agg.function} for agg in request_body.aggregations]
             print(f"[DEBUG] Aggregations convertidas a dict: {aggregations_dict}")
+        
+        # Convertir AdditionalFilterRequest a diccionarios si existen
+        additional_filters_dict = None
+        if request_body.additional_filters:
+            additional_filters_dict = [{"column": filt.column, "operator": filt.operator, "value": filt.value} for filt in request_body.additional_filters]
+            print(f"[DEBUG] Additional filters convertidas a dict: {additional_filters_dict}")
         
         data = bigquery_service.get_data_from_table(
             table_id=request_body.table_name,
@@ -123,7 +136,8 @@ async def query_bigquery_table_data(request_body: TableDataQueryRequest):
             end_date=request_body.end_date,
             aggregations=aggregations_dict,
             group_by=request_body.group_by,
-            order_by=request_body.order_by
+            order_by=request_body.order_by,
+            additional_filters=additional_filters_dict
         )
         return {"data": data}
     except ValueError as ve: # Errores como tabla no permitida, columnas vacías, columna no existe
